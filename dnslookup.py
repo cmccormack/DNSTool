@@ -11,44 +11,51 @@ my_resolver = dns.resolver.Resolver(configure=True)
 my_resolver.timeout = 2
 my_resolver.lifetime = 2
 
-# Max length of four dot separated octets (e.g. 255.255.255.255)
+# Max length of four dot-separated octets (e.g. 255.255.255.255)
 MAX_IP_LEN = 15
 
 IN_ADDR = '.in-addr.arpa.'
 
 
-def dns_lookup(name, query_type='A'):
+def print_response(ip, name, type, error_msg, error_type):
+    response = 'IP: {0: <{1}}  Hostname: {2:<30}'.format(
+        ip, MAX_IP_LEN, name)
 
-    if debug: print '[D] dns_lookup: name = {}'.format(name.to_text())
-    if debug: print '[D] dns_lookup query_type: {}'.format(query_type)
+    if error_msg:
+        response = '[-] {0}[{1} ({2})]'.format(
+                response, error_msg, error_type)
+    else:
+        response = '[+] {}'.format(response)
 
-    name_text = name.to_text()
-    short_name = '...{0}'.format(name_text[-27:]) if len(name) > 30 else name_text
+    print response
+
+def dns_lookup(query, query_type='A'):
+
+    # Parse name from dns.name.Name object and shorten to fit if gt 30 characters
+    query_text = query.to_text()
+    short_name = '...{0}'.format(query_text[-27:]) if len(query) > 30 else query_text
     
     try:
-        
-        response = my_resolver.query(name, query_type).rrset.to_text().split()[-1]
+        # Query DNS server and parse relevant string from response
+        response = my_resolver.query(query, query_type).rrset.to_text().split()[-1]
 
-        if debug: print '[D] response: {0}'.format(response)
-
+        # Swap response and name for reverse lookups to fit column scheme
         if query_type == 'PTR':
-            response, name = dns.reversename.to_address(name), response
+            response, query = dns.reversename.to_address(query), response
 
         print '[+] IP: {0: <{1}}  Hostname: {2:<30}'.format(
-            response, MAX_IP_LEN, name)
+            response, MAX_IP_LEN, query)
 
         return response
 
     except dns.resolver.NXDOMAIN:
-        print '[-] IP: {0: <{1}}  Hostname: {2:<30}  [No Record Found (NXDOMAIN)]'.format(
-                '', MAX_IP_LEN, short_name)
+        print_response('', query, query_type, 'No Record Found', 'NXDOMAIN')
 
     except dns.resolver.NoAnswer:
-        print '[-] IP: {0: <{1}}  Hostname: {2:<30}  [No Record Found (NoAnswer)]'.format(
-                '', MAX_IP_LEN, short_name)
+        print_response('', query, query_type, 'No Record Found', 'NoAnswer')
 
     except dns.resolver.Timeout:
-        print 'Timed out while resolving {0}'.format(name)
+        print_response('', query, query_type, 'Timed Out', 'Timeout')
 
 
 
@@ -70,22 +77,28 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.type = args.type.upper()
 
+
+    # Parse nameserver argument to determine if valid 
+    nameserver = None
     if args.nameserver:
+        print args.nameserver
+        # Check if provided nameserver is IP Address or Name
         try:
             nameserver = ipaddress.ip_address(args.nameserver).exploded
+
         except:
-            nameserver = dns_lookup(args.nameserver)
+            nameserver = dns_lookup(dns.name.from_text(args.nameserver))
 
-        my_resolver = dns.resolver.Resolver(configure=False)
-        my_resolver.nameservers = [nameserver]
-        my_resolver.timeout = 2
-        my_resolver.lifetime = 2
+        if nameserver:
+            my_resolver = dns.resolver.Resolver(configure=False)
+            my_resolver.nameservers = [nameserver]
+            my_resolver.timeout = 2
+            my_resolver.lifetime = 2
+        else:
+            print '[-] {0} is not a valid nameserver, exiting...'.format(args.nameserver)
+            quit()
 
-
-    if debug: print '[D] args.reverse: {}'.format(args.reverse)
-    if debug: print '[D] args.host: {}'.format(args.host)
-    if debug: print '[D] args.type: {}'.format(args.type)
-    if debug: print '[D] Nameservers: {}'.format(my_resolver.nameservers)
+            
 
 
     # Check if HOST is IP Address/Subnet.  Ignores invalid type flag
@@ -94,12 +107,10 @@ if __name__ == '__main__':
         args.type = 'PTR'
     except ValueError:
         query = dns.name.from_text(args.host)
-    if debug: print '[D] query: {} type: {}'.format(query, type(query))
 
     if args.type == 'PTR':
         for ip in query:
             reversename = dns.reversename.from_address(ip.exploded)
-            #if debug: print '[D] reversename = {}'.format(reversename.to_text())
             dns_lookup(reversename, query_type='PTR')
 
     if args.type.upper() in ['A', 'CNAME', 'DNAME', 'NS', 'MX', 'SOA']:
