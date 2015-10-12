@@ -36,6 +36,7 @@ def dns_lookup(query, query_type='A'):
     short_name = '...{0}'.format(query_text[-27:]) if len(query) > 30 else query_text
     
     try:
+        response = ''
         # Query DNS server and parse relevant string from response
         response = my_resolver.query(query, query_type).rrset.to_text().split()[-1]
 
@@ -49,13 +50,17 @@ def dns_lookup(query, query_type='A'):
         return response
 
     except dns.resolver.NXDOMAIN:
-        print_response('', query, query_type, 'No Record Found', 'NXDOMAIN')
+        if query_type == 'PTR':
+            response, query = dns.reversename.to_address(query), response
+        print_response(response, query, query_type, 'No Record Found', 'NXDOMAIN')
 
     except dns.resolver.NoAnswer:
-        print_response('', query, query_type, 'No Record Found', 'NoAnswer')
+        print_response(response, query, query_type, 'No Record Found', 'NoAnswer')
 
     except dns.resolver.Timeout:
-        print_response('', query, query_type, 'Timed Out', 'Timeout')
+        print_response(response, query, query_type, 'Timed Out', 'Timeout')
+    except dns.resolver.NoNameservers:
+        print_response(response, query, query_type, 'No Nameservers', 'NoNameservers')
 
 
 
@@ -66,13 +71,15 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--reverse', action='store_true', default=False,
         help='Perform a reverse lookup on an IP address.  \
         This is the default behavior when an IP address is provided')
-    parser.add_argument('host', metavar='HOST', action='store', 
+    parser.add_argument('host', metavar='HOST', action='store', nargs='?',
         help='Hostname or IP Address/IP Subnet')
     parser.add_argument('-ns', '--nameserver', nargs='?',
         help='Specify Name Server \
         (e.g. 8.8.8.8 or google-public-dns-a.google.com.)')
     parser.add_argument('-t', '--type', default='A',
         help='Record Type (A, CNAME, NS, ...)')
+    parser.add_argument('-f', '--filename',
+        help='Specify a file of hosts to lookup.')
 
     args = parser.parse_args()
     args.type = args.type.upper()
@@ -98,7 +105,31 @@ if __name__ == '__main__':
             print '[-] {0} is not a valid nameserver, exiting...'.format(args.nameserver)
             quit()
 
-            
+    
+    if args.filename:
+        queries = []
+        with open(args.filename, 'r') as f:
+            for line in f:
+                queries.append(line.strip())
+
+        for query in queries:
+            try:
+                query = ipaddress.ip_network(query, strict=False)
+                args.type = 'PTR'
+            except:
+                query = dns.name.from_text(query)
+                args.type = 'A'
+
+            if isinstance(query, ipaddress.IPv4Network):
+                for ip in query:
+                    reversename = dns.reversename.from_address(ip.exploded)
+                    dns_lookup(reversename, query_type='PTR')
+            else:
+                dns_lookup(query, args.type)
+
+
+        quit()
+
 
 
     # Check if HOST is IP Address/Subnet.  Ignores invalid type flag
