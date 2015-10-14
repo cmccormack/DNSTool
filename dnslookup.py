@@ -21,7 +21,7 @@ MAX_IP_LEN = 15
 IN_ADDR = '.in-addr.arpa.'
 
 
-def print_response(ip, name, type, error_msg, error_type):
+def print_response(ip, name, type, error_msg='', error_type=''):
     response = 'IP: {0: <{1}}  Hostname: {2:<30}'.format(
         ip, MAX_IP_LEN, name)
 
@@ -36,11 +36,18 @@ def print_response(ip, name, type, error_msg, error_type):
 
 
 def get_host_type(host):
+
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        print '[D] {} not an IPv4Address.'.format(host)
+
     try:
         return ipaddress.ip_network(host)
-
     except ValueError:
-        return dns.name.from_text(host)
+        print '[D] {} not an IPv4Network.'.format(host)
+
+    return dns.name.from_text(host)
 
 
 
@@ -68,7 +75,7 @@ if __name__ == '__main__':
     parser.add_argument('host', metavar='HOST', action='store', nargs='?',
         help='Hostname or IP Address/IP Subnet', default='')
     parser.add_argument('-n', '--nameserver', 
-        help='Specify Name Server \
+        help='Specify Name Server IP or name\
         (e.g. 8.8.8.8 or google-public-dns-a.google.com.)')
     parser.add_argument('-t', '--type', default='A',
         help='Record Type (A, CNAME, NS, ...)')
@@ -90,17 +97,17 @@ if __name__ == '__main__':
     if args.nameserver:
 
         # Check if provided nameserver is an IP Address or Name
-        nameserver = get_host_type(args.nameserver)
-        if isinstance(nameserver, dns.name.Name):
+        supplied_nameserver = get_host_type(args.nameserver)
+        if isinstance(supplied_nameserver, dns.name.Name):
             try:
-                nameserver = dns_lookup(nameserver)
+                 my_resolver.nameservers = [dns_lookup(supplied_nameserver)]
             except:
                 print 'Cannot resolve nameserver to IP address, ' \
-                 'exiting...  [{}]'.format(nameserver)
+                 'exiting...  [{}]'.format(supplied_nameserver)
                 quit()
 
-        if debug: print '[D] nameserver: {}'.format(nameserver)
-        my_resolver.nameservers = [nameserver]
+        if debug: print '[D] nameserver: {}'.format(my_resolver.nameservers)
+        #my_resolver.nameservers = [nameserver]
 
 
 
@@ -115,6 +122,7 @@ if __name__ == '__main__':
                 else:
                     queries.append((query, args.type))
 
+        print queries
 
     if queries:
         for query in queries:
@@ -122,6 +130,11 @@ if __name__ == '__main__':
             for item in response:
                 print item
             if debug: '[D] dns_lookup.response: {}'.format(response)
-        """except:
-            print 'Error resolving host, exiting...  [{}]'.format(query)
-            quit()"""
+
+
+
+""" To Do List:
+        Fix Nameservers to only accept IP address or name, not IP ip_network
+        Everything else
+
+"""
