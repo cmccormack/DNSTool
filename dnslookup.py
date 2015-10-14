@@ -4,12 +4,16 @@ import ipaddress
 import argparse
 
 # Used for Debug
-debug = False
+debug = True
 
-# Create new Resolver instance and use OS resolver by default
-my_resolver = dns.resolver.Resolver(configure=True)
-my_resolver.timeout = 2
-my_resolver.lifetime = 2
+BAD_DNS = ['68.105.28.12']
+OPEN_DNS = ['208.67.222.222', '208.67.220.220']
+GOOGLE_DNS = ['8.8.8.8', '8.8.4.4']
+PREFERRED_DNS = BAD_DNS
+DNS_TIMEOUT = 2
+DNS_LIFETIME = 2
+
+ 
 
 # Max length of four dot-separated octets (e.g. 255.255.255.255)
 MAX_IP_LEN = 15
@@ -29,122 +33,95 @@ def print_response(ip, name, type, error_msg, error_type):
 
     print response
 
+
+
+def get_host_type(host):
+    try:
+        return ipaddress.ip_network(host)
+
+    except ValueError:
+        return dns.name.from_text(host)
+
+
+
 def dns_lookup(query, query_type='A'):
 
-    # Parse name from dns.name.Name object and shorten to fit if gt 30 characters
-    query_text = query.to_text()
-    short_name = '...{0}'.format(query_text[-27:]) if len(query) > 30 else query_text
-    
-    try:
-        response = ''
-        # Query DNS server and parse relevant string from response
-        response = my_resolver.query(query, query_type).rrset.to_text().split()[-1]
+    response = my_resolver.query(query, query_type)
+    return [answer for answer in response]
 
-        # Swap response and name for reverse lookups to fit column scheme
-        if query_type == 'PTR':
-            response, query = dns.reversename.to_address(query), response
-
-        print '[+] IP: {0: <{1}}  Hostname: {2:<30}'.format(
-            response, MAX_IP_LEN, query)
-
-        return response
-
-    except dns.resolver.NXDOMAIN:
-        if query_type == 'PTR':
-            response, query = dns.reversename.to_address(query), response
-        print_response(response, query, query_type, 'No Record Found', 'NXDOMAIN')
-
-    except dns.resolver.NoAnswer:
-        print_response(response, query, query_type, 'No Record Found', 'NoAnswer')
-
-    except dns.resolver.Timeout:
-        print_response(response, query, query_type, 'Timed Out', 'Timeout')
-    except dns.resolver.NoNameservers:
-        print_response(response, query, query_type, 'No Nameservers', 'NoNameservers')
 
 
 
 
 if __name__ == '__main__':
 
+    # Create new Resolver instance and use System Configuration by default
+    my_resolver = dns.resolver.Resolver(configure=True)
+    my_resolver.timeout = DNS_TIMEOUT
+    my_resolver.lifetime = DNS_LIFETIME 
+
+    # Argparse
     parser = argparse.ArgumentParser(description="Perform DNS Queries.")
     parser.add_argument('-r', '--reverse', action='store_true', default=False,
         help='Perform a reverse lookup on an IP address.  \
         This is the default behavior when an IP address is provided')
     parser.add_argument('host', metavar='HOST', action='store', nargs='?',
-        help='Hostname or IP Address/IP Subnet')
-    parser.add_argument('-ns', '--nameserver', nargs='?',
+        help='Hostname or IP Address/IP Subnet', default='')
+    parser.add_argument('-n', '--nameserver', 
         help='Specify Name Server \
         (e.g. 8.8.8.8 or google-public-dns-a.google.com.)')
     parser.add_argument('-t', '--type', default='A',
         help='Record Type (A, CNAME, NS, ...)')
     parser.add_argument('-f', '--filename',
-        help='Specify a file of hosts to lookup.')
+        help='Specify a file containing a list of IPs or hosts.')
 
     args = parser.parse_args()
-    args.type = args.type.upper()
+    query_type = args.type.upper()
+    queries = []
+
+
+    if args.host:
+        host, host_type = get_host_type(args.host), args.type
+        if isinstance(host, ipaddress.IPv4Network): host_type = 'PTR'
+        queries.append((host, host_type))
 
 
     # Parse nameserver argument to determine if valid 
-    nameserver = None
     if args.nameserver:
-        print args.nameserver
-        # Check if provided nameserver is IP Address or Name
-        try:
-            nameserver = ipaddress.ip_address(args.nameserver).exploded
 
-        except:
-            nameserver = dns_lookup(dns.name.from_text(args.nameserver))
+        # Check if provided nameserver is an IP Address or Name
+        nameserver = get_host_type(args.nameserver)
+        if isinstance(nameserver, dns.name.Name):
+            try:
+                nameserver = dns_lookup(nameserver)
+            except:
+                print 'Cannot resolve nameserver to IP address, ' \
+                 'exiting...  [{}]'.format(nameserver)
+                quit()
 
-        if nameserver:
-            my_resolver = dns.resolver.Resolver(configure=False)
-            my_resolver.nameservers = [nameserver]
-            my_resolver.timeout = 2
-            my_resolver.lifetime = 2
-        else:
-            print '[-] {0} is not a valid nameserver, exiting...'.format(args.nameserver)
-            quit()
+        if debug: print '[D] nameserver: {}'.format(nameserver)
+        my_resolver.nameservers = [nameserver]
 
-    
+
+
+    # Parse file if -f flag set
     if args.filename:
-        queries = []
         with open(args.filename, 'r') as f:
             for line in f:
-                queries.append(line.strip())
+                query = get_host_type(line.strip())
 
+                if isinstance(query, ipaddress.IPv4Network):
+                    queries.append((query, 'PTR'))
+                else:
+                    queries.append((query, args.type))
+
+
+    if queries:
         for query in queries:
-            try:
-                query = ipaddress.ip_network(query, strict=False)
-                args.type = 'PTR'
-            except:
-                query = dns.name.from_text(query)
-                args.type = 'A'
-
-            if isinstance(query, ipaddress.IPv4Network):
-                for ip in query:
-                    reversename = dns.reversename.from_address(ip.exploded)
-                    dns_lookup(reversename, query_type='PTR')
-            else:
-                dns_lookup(query, args.type)
-
-
-        quit()
-
-
-
-    # Check if HOST is IP Address/Subnet.  Ignores invalid type flag
-    try:
-        query = ipaddress.ip_network(args.host, strict=False)
-        args.type = 'PTR'
-    except ValueError:
-        query = dns.name.from_text(args.host)
-
-    if args.type == 'PTR':
-        for ip in query:
-            reversename = dns.reversename.from_address(ip.exploded)
-            dns_lookup(reversename, query_type='PTR')
-
-    if args.type.upper() in ['A', 'CNAME', 'DNAME', 'NS', 'MX', 'SOA']:
-        dns_lookup(query, args.type)
-
-
+            response = dns_lookup(*query)
+            for item in response:
+                print item
+            if debug: '[D] dns_lookup.response: {}'.format(response)
+        """except:
+            print 'Error resolving host, exiting...  [{}]'.format(query)
+            quit()"""
