@@ -40,12 +40,12 @@ def get_host_type(host):
     try:
         return ipaddress.ip_address(host)
     except ValueError:
-        print '[D] {} not an IPv4Address.'.format(host)
+        if debug: print '[D] {} not an IPv4Address.'.format(host)
 
     try:
         return ipaddress.ip_network(host)
     except ValueError:
-        print '[D] {} not an IPv4Network.'.format(host)
+        if debug: print '[D] {} not an IPv4Network.'.format(host)
 
     return dns.name.from_text(host)
 
@@ -96,18 +96,30 @@ if __name__ == '__main__':
     # Parse nameserver argument to determine if valid 
     if args.nameserver:
 
-        # Check if provided nameserver is an IP Address or Name
         supplied_nameserver = get_host_type(args.nameserver)
+        if debug: print '[D] nameserver type: {}'.format(type(supplied_nameserver))
+        if isinstance(supplied_nameserver, ipaddress.IPv4Address):
+            my_resolver.nameservers = [supplied_nameserver.exploded]
+
         if isinstance(supplied_nameserver, dns.name.Name):
             try:
-                 my_resolver.nameservers = [dns_lookup(supplied_nameserver)]
-            except:
-                print 'Cannot resolve nameserver to IP address, ' \
+                 my_resolver.nameservers = map(str, dns_lookup(supplied_nameserver))
+            except dns.resolver.NoAnswer:
+                print '[x] Cannot resolve nameserver to IP address, ' \
                  'exiting...  [{}]'.format(supplied_nameserver)
                 quit()
 
-        if debug: print '[D] nameserver: {}'.format(my_resolver.nameservers)
-        #my_resolver.nameservers = [nameserver]
+        # Test if nameserver is valid using nameserver as query
+        reversename = dns.reversename.from_address(
+            my_resolver.nameservers[0])
+        try:
+            dns_lookup(reversename, 'PTR')
+        except dns.resolver.Timeout:
+            print '[x] Connection timed out; no servers could be reached' \
+             '  [{}]'.format(supplied_nameserver)
+            quit()
+
+        if debug: print '[D] nameserver: {}'.format(my_resolver.nameservers[0])
 
 
 
